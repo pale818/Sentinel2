@@ -1,0 +1,21 @@
+# Satellite imagery: large, and reproducible from the Copernicus Browser
+# (see README, "Data"). Do not commit.
+data/raw/
+data/processed/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Raster sidecar files created by QGIS / GDAL
+*.aux.xml
+
+# QGIS temporary and lock files (the labels GeoPackage itself IS committed)
+*.gpkg-shm
+*.gpkg-wal
+*.qgs~
+*.qgz~
+
+# macOS
+.DS_Store
