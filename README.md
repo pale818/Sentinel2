@@ -1,24 +1,43 @@
 # Land cover classification of Lisbon with Sentinel-2
 
 > **Status: work in progress.** Data acquisition, stacking and data checks are done.
-> Labelling, training and evaluation are next. Sections marked *(planned)* describe
-> intended methods, not results.
+> Labelling is in progress. Sections marked *(planned)* describe intended methods,
+> not results. See "Plan" for the full sequence.
 
 ## Goal
 
 Classify every pixel of a Sentinel-2 image of the Lisbon area into four land cover
 classes with a Random Forest, and evaluate the result honestly:
 
-| Class | Value |
-|---|---|
-| Water | 0 |
-| Vegetation | 1 |
-| Urban | 2 |
-| Bare soil | 3 |
+| Value | Class | Includes | Excludes |
+|---|---|---|---|
+| 0 | Water | river, estuary, ponds, open sea | tidal mudflats, salt marsh |
+| 1 | Vegetation | forest, parks, gardens, green fields | dry yellow fields (ambiguous) |
+| 2 | Built-up | buildings, roads, paved areas, ports, airfields | street trees, gardens |
+| 3 | Bare soil | bare earth, empty plots, construction sites, beach sand | tidal mudflats |
+
+**Not labelled:** tidal mudflats, salt marsh, shadows, and anything ambiguous.
+These areas fit none of the four classes cleanly. The model will still assign
+them a class in the final map, and that behaviour is inspected and reported
+(see "Known limitations").
 
 The emphasis is on sound methodology rather than a high accuracy number. Labels
 are drawn by hand, the train/test split respects spatial structure, and the
 limitations are reported.
+
+## Plan
+
+| # | Step | Status |
+|---|---|---|
+| 1 | Download Sentinel-2 L2A image, stack the bands | done |
+| 2 | Data checks (value range, no-data, spectra at known locations) | done |
+| 3 | Label polygons in QGIS (15–25 per class, spread over the whole image) | in progress |
+| 4 | Review polygons against the reference orthophoto and Sentinel-2 | in progress |
+| 5 | Extract labelled pixels, mask no-data, compute indices, check counts, plot class spectra | planned |
+| 6 | Train Random Forest, evaluate with **spatial block cross-validation** | planned |
+| 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | planned |
+| 8 | Predict the full map and inspect it visually (shores, mudflats, built-up vs bare soil) | planned |
+| 9 | Final README: results, figures, limitations | planned |
 
 ## Data
 
@@ -58,7 +77,8 @@ The imagery is not in this repository (see `.gitignore`). To reproduce it:
 SentinelProject/
 ├── data/
 │   ├── raw/            # band TIFFs from the export (not committed)
-│   └── processed/      # stack.tif (not committed, recreated by stack_bands.py)
+│   ├── processed/      # stack.tif (not committed, recreated by stack_bands.py)
+│   └── labels.gpkg     # hand-drawn training polygons (committed)
 ├── stack_bands.py      # stacks the 6 bands into one GeoTIFF
 ├── check_stack.py      # sanity checks on the stack
 ├── requirements.txt
@@ -141,38 +161,95 @@ similar spectra in every band. Urban/bare soil confusion is therefore
 expected. This will be quantified properly with class mean spectra
 from the labelled data.
 
-### 3. Labelling in QGIS *(planned)*
+### 3. Labelling in QGIS — in progress
 
-Hand-drawn polygons in a GeoPackage layer with an integer `class` field,
-roughly 15–30 small polygons per class spread across the image. Polygons are
-drawn inside homogeneous areas, away from class boundaries and image edges.
+Hand-drawn polygons in `data/labels.gpkg` (layer `labels`, polygon geometry,
+EPSG:32629) with an integer `class` field. The automatic `fid` serves as the
+polygon ID.
+
+- 15–25 small polygons per class, **spread across the whole image**, so that
+  every class appears in many different areas. This is required for the
+  spatial cross-validation in step 6.
+- Polygons are drawn inside homogeneous areas, away from class boundaries and
+  the image edge. Homogeneous means homogeneous **at 10 m**, the Sentinel-2
+  pixel size.
+- Polygons are labelled by what the pixels show, not by what the area is called
+  (a tree in a city district is vegetation).
+- Ambiguous areas are skipped, not guessed.
+- Labels are not marked as train or test. The split is done in code (step 6).
 
 Labels are deliberately **not** created by thresholding spectral indices.
 The model would then just relearn those thresholds, and the evaluation would be circular.
 
-### 4. Features and training *(planned)*
+### 4. Polygon review — in progress
 
+Polygons are checked against two sources:
+
+- the Sentinel-2 image itself (true colour and false colour B08/B04/B03), which
+  is what the model sees
+- the Portuguese reference orthophoto `ortoSat2023-CorVerdadeira`, loaded in
+  QGIS as an online WMS layer, which shows far more detail
+  <!-- TODO: add provider and licence from the WMS layer properties in QGIS -->
+
+**Rule:** a polygon is kept only if both sources agree on its class. The
+orthophoto is from 2023 and the satellite image from 2026, so where they
+disagree (new construction, cleared land) the polygon is removed rather than
+trusting either source.
+
+### 5. Pixel extraction and features *(planned)*
+
+- Rasterize the polygons onto the image grid (class and polygon ID per pixel).
+- Mask the no-data border (pixels that are 0 in all bands).
 - Features: the 6 bands plus NDVI (B08, B04), NDWI (B03, B08) and NDBI (B11, B08).
   The indices are model inputs, not labels.
+- Count pixels per class and per polygon. Large polygons are capped to a
+  maximum number of pixels, so that no single area dominates training.
+- Plot the mean spectrum of each class, to see before training how separable
+  the classes are, especially built-up vs bare soil.
+
+### 6. Training and evaluation *(planned)*
+
 - Random Forest (~200 trees, `class_weight="balanced"`) because water
   dominates the scene.
-- Train/test split **by polygon**, not by pixel. Neighbouring pixels are
-  nearly identical (spatial autocorrelation). A random pixel split puts
-  near-duplicates into both sets and inflates accuracy.
+- **Spatial block cross-validation.** The image is divided into blocks of about
+  2 × 2 km, and each polygon is assigned to the block it falls in.
+  `StratifiedGroupKFold` with the block as the group means every fold tests on
+  areas the model has never seen, and every polygon is tested exactly once.
 
-### 5. Evaluation *(planned)*
+  Why blocks and not single pixels or single polygons: neighbouring pixels are
+  nearly identical (spatial autocorrelation). Two polygons 100 m apart are
+  still near-duplicates. Grouping by block keeps whole neighbourhoods on one
+  side of the split. The split is made by code, not chosen by hand, so it is
+  not biased towards easy test areas.
+- Metrics: confusion matrix and per-class precision, recall and F1, not only
+  overall accuracy.
 
-Confusion matrix and per-class precision, recall and F1, not only overall
-accuracy. A comparison of random-pixel vs polygon-grouped splitting will
-measure how much a naive split overstates performance.
+### 7. Random vs spatial split *(planned)*
+
+The same model is also evaluated with a random pixel split. The difference
+between the two scores shows how much a naive split overstates accuracy.
+
+### 8. Full map and visual inspection *(planned)*
+
+The model predicts every pixel of the image (no-data masked). The map is
+inspected visually, with attention to shorelines, tidal mudflats, the edges of
+Monsanto, and areas where built-up and bare soil meet.
 
 ## Known limitations
 
+- **Test accuracy measures easy pixels.** Labels are drawn only in clean,
+  homogeneous areas. The cross-validation score therefore describes
+  performance on pure pixels and overestimates the accuracy of the full map,
+  which also contains mixed pixels at boundaries.
 - **Single date.** One summer image. Seasonal differences, e.g. dry
   vegetation vs bare soil, are not captured.
 - **Mixed pixels.** At 10 m, many pixels contain more than one land cover
-  (street trees in urban blocks, field edges).
-- **Urban vs bare soil.** These are spectrally similar in this scene (see above).
+  (street trees in built-up blocks, field edges, shorelines).
+- **Built-up vs bare soil.** These are spectrally similar in this scene (see above).
+- **Unlabelled surface types.** Tidal mudflats and salt marsh belong to none of
+  the four classes, but the model must still assign them one.
+- **Reference data age.** The orthophoto (2023) is three years older than the
+  satellite image (2026).
 - **Limited labels.** Labels are hand-drawn by one person on a single image,
   with no field validation.
 - **Ambiguous land cover.** Dry fields in July sit between "vegetation" and
