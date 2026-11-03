@@ -1,7 +1,7 @@
 # Land cover classification of Lisbon with Sentinel-2
 
 > **Status: work in progress.** Data acquisition, stacking and data checks are done.
-> Labelling is in progress. Sections marked *(planned)* describe intended methods,
+> Labelling is done. Sections marked *(planned)* describe intended methods,
 > not results. See "Plan" for the full sequence.
 
 ## Goal
@@ -11,7 +11,7 @@ classes with a Random Forest, and evaluate the result honestly:
 
 | Value | Class | Includes | Excludes |
 |---|---|---|---|
-| 0 | Water | river, estuary, ponds, open sea | tidal mudflats, salt marsh |
+| 0 | Water | river, estuary, harbour basins | tidal mudflats, salt marsh, salt pans and aquaculture ponds |
 | 1 | Vegetation | forest, parks, gardens, green fields | dry yellow fields (ambiguous) |
 | 2 | Built-up | buildings, roads, paved areas, ports, airfields | street trees, gardens |
 | 3 | Bare soil | bare earth, empty plots, construction sites, beach sand | tidal mudflats |
@@ -31,8 +31,8 @@ limitations are reported.
 |---|---|---|
 | 1 | Download Sentinel-2 L2A image, stack the bands | done |
 | 2 | Data checks (value range, no-data, spectra at known locations) | done |
-| 3 | Label polygons in QGIS (15–25 per class, spread over the whole image) | in progress |
-| 4 | Review polygons against the reference orthophoto and Sentinel-2 | in progress |
+| 3 | Label polygons in QGIS (spread over the whole image) | done (98 polygons) |
+| 4 | Review polygons visually and with a per-polygon spectral check | done |
 | 5 | Extract labelled pixels, mask no-data, compute indices, check counts, plot class spectra | planned |
 | 6 | Train Random Forest, evaluate with **spatial block cross-validation** | planned |
 | 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | planned |
@@ -161,7 +161,7 @@ similar spectra in every band. Urban/bare soil confusion is therefore
 expected. This will be quantified properly with class mean spectra
 from the labelled data.
 
-### 3. Labelling in QGIS — in progress
+### 3. Labelling in QGIS — done
 
 Hand-drawn polygons in `data/labels.gpkg` (layer `labels`, polygon geometry,
 EPSG:32629) with an integer `class` field. The automatic `fid` serves as the
@@ -181,20 +181,45 @@ polygon ID.
 Labels are deliberately **not** created by thresholding spectral indices.
 The model would then just relearn those thresholds, and the evaluation would be circular.
 
-### 4. Polygon review — in progress
+### 4. Polygon review — done
 
-Polygons are checked against two sources:
+Every polygon was checked in two ways:
 
-- the Sentinel-2 image itself (true colour and false colour B08/B04/B03), which
-  is what the model sees
-- the Portuguese reference orthophoto `ortoSat2023-CorVerdadeira`, loaded in
-  QGIS as an online WMS layer, which shows far more detail
-  <!-- TODO: add provider and licence from the WMS layer properties in QGIS -->
+1. **Visually**, on the Sentinel-2 image in true colour (B04/B03/B02) and false
+   colour (B08/B04/B03). False colour makes vegetation bright red and water
+   nearly black, which separates them far better than true colour.
+2. **Spectrally**, by computing the pixel values inside each polygon (mean,
+   minimum, 10th percentile of NDVI / NDWI) and comparing them with the rest of
+   its class.
 
-**Rule:** a polygon is kept only if both sources agree on its class. The
-orthophoto is from 2023 and the satellite image from 2026, so where they
-disagree (new construction, cleared land) the polygon is removed rather than
-trusting either source.
+Polygons were removed when the visual and spectral evidence disagreed with the
+assigned class. Examples:
+- dark-green salt pans / aquaculture ponds labelled as vegetation
+  (NDVI −0.2 to −0.3: near-infrared is absorbed, so this is water, not plants)
+- a clearing inside Monsanto labelled as bare soil (NDVI ~0.16, dark: dry grass)
+- accidental stacked duplicates created with the copy tool
+
+A reference orthophoto (DGT OrtoSat 2023) was considered as a third source but
+could not be loaded reliably as a WMS layer, so it was **not** used.
+
+**Final labels:** 98 polygons.
+
+| Class | Polygons |
+|---|---|
+| Water | 34 |
+| Vegetation | 22 |
+| Built-up | 31 |
+| Bare soil | 11 |
+
+Clear bare soil is rare in this summer scene, hence the smaller count. Clusters
+were thinned (e.g. at most ~8 vegetation polygons in Monsanto, fewer built-up
+polygons in central Lisbon), and variety was added on purpose (turbid and clear
+water; forest, parks and irrigated fields; residential, industrial and port areas).
+
+**Early finding.** Mean polygon spectra show that bare soil and built-up have
+almost identical NDVI (0.09 vs 0.09) and NDBI (0.11 vs 0.13). Bare soil is
+mainly brighter in every band. Several bare-soil polygons fall within the
+spectral range of the built-up class, so confusion between the two is expected.
 
 ### 5. Pixel extraction and features *(planned)*
 
@@ -248,8 +273,13 @@ Monsanto, and areas where built-up and bare soil meet.
 - **Built-up vs bare soil.** These are spectrally similar in this scene (see above).
 - **Unlabelled surface types.** Tidal mudflats and salt marsh belong to none of
   the four classes, but the model must still assign them one.
-- **Reference data age.** The orthophoto (2023) is three years older than the
-  satellite image (2026).
+- **Spectrally screened labels.** Polygons whose spectra did not match their
+  class were removed. This removes mislabels, but it also removes *atypical*
+  examples, which makes the classes look more separable than they really are.
+  Accuracy measured on these labels is therefore optimistic.
+- **No independent reference.** Labels were checked only against the same
+  Sentinel-2 image the model uses, not against higher-resolution imagery or
+  field data.
 - **Limited labels.** Labels are hand-drawn by one person on a single image,
   with no field validation.
 - **Ambiguous land cover.** Dry fields in July sit between "vegetation" and
