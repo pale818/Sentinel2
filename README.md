@@ -14,7 +14,7 @@ classes with a Random Forest, and evaluate the result honestly:
 | 0 | Water | river, estuary, harbour basins | tidal mudflats, salt marsh, salt pans and aquaculture ponds |
 | 1 | Vegetation | forest, parks, gardens, green fields | dry yellow fields (ambiguous) |
 | 2 | Built-up | buildings, roads, paved areas, ports, airfields | street trees, gardens |
-| 3 | Bare soil | bare earth, empty plots, construction sites, beach sand | tidal mudflats |
+| 3 | Bare soil | fallow and harvested fields, bare dirt lots, dry beach sand | tidal mudflats, wet sand, dirt car parks, construction sites (unverifiable) |
 
 **Not labelled:** tidal mudflats, salt marsh, shadows, and anything ambiguous.
 These areas fit none of the four classes cleanly. The model will still assign
@@ -31,8 +31,8 @@ limitations are reported.
 |---|---|---|
 | 1 | Download Sentinel-2 L2A image, stack the bands | done |
 | 2 | Data checks (value range, no-data, spectra at known locations) | done |
-| 3 | Label polygons in QGIS (spread over the whole image) | done (98 polygons) |
-| 4 | Review polygons visually and with a per-polygon spectral check | done |
+| 3 | Label polygons in QGIS (spread over the whole image) | done (97 polygons) |
+| 4 | Review polygons visually, spectrally and against a reference orthophoto | done |
 | 5 | Extract labelled pixels, mask no-data, compute indices, check counts, plot class spectra | planned |
 | 6 | Train Random Forest, evaluate with **spatial block cross-validation** | planned |
 | 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | planned |
@@ -183,43 +183,57 @@ The model would then just relearn those thresholds, and the evaluation would be 
 
 ### 4. Polygon review — done
 
-Every polygon was checked in two ways:
+Every polygon was checked in up to three ways:
 
-1. **Visually**, on the Sentinel-2 image in true colour (B04/B03/B02) and false
-   colour (B08/B04/B03). False colour makes vegetation bright red and water
-   nearly black, which separates them far better than true colour.
+1. **Visually on Sentinel-2**, in true colour (B04/B03/B02) and false colour
+   (B08/B04/B03). False colour makes vegetation bright red and water nearly
+   black, which separates them far better than true colour.
 2. **Spectrally**, by computing the pixel values inside each polygon (mean,
    minimum, 10th percentile of NDVI / NDWI) and comparing them with the rest of
    its class.
+3. **Against a reference orthophoto** (DGT OrtoSat 2023, true and false colour,
+   loaded in QGIS as a WMS layer) for the bare-soil class, where 10 m pixels are
+   least reliable.
+   <!-- TODO: check the DGT OrtoSat 2023 terms of use before publishing any orthophoto imagery -->
 
-Polygons were removed when the visual and spectral evidence disagreed with the
-assigned class. Examples:
+The two image sources answer different questions. The orthophoto (~0.3 m)
+shows **what** a surface is (dirt lot vs. car park, soil vs. dry grass). The
+Sentinel-2 image shows **what it is in July 2026**, which is what the labels
+must describe. A polygon was kept only when both agreed. Where they disagreed,
+for example a field that was dry grass in 2023 but bright and bare in 2026, the
+polygon was removed rather than trusting either source.
+
+Polygons were removed when the evidence disagreed with the assigned class. Examples:
 - dark-green salt pans / aquaculture ponds labelled as vegetation
   (NDVI −0.2 to −0.3: near-infrared is absorbed, so this is water, not plants)
 - a clearing inside Monsanto labelled as bare soil (NDVI ~0.16, dark: dry grass)
 - accidental stacked duplicates created with the copy tool
 
-A reference orthophoto (DGT OrtoSat 2023) was considered as a third source but
-could not be loaded reliably as a WMS layer, so it was **not** used.
+**The orthophoto check changed the bare-soil class substantially.** About half
+of the bare-soil candidates that looked plausible at 10 m turned out to be dirt
+car parks, airport aprons, scrub, or land that had changed since 2023. They were
+removed and replaced with candidates verified in both sources: fallow and
+harvested fields, bare dirt lots, and dry beach sand.
 
-**Final labels:** 98 polygons.
+**Final labels:** 97 polygons.
 
 | Class | Polygons |
 |---|---|
 | Water | 34 |
 | Vegetation | 22 |
 | Built-up | 31 |
-| Bare soil | 11 |
+| Bare soil | 10 |
 
 Clear bare soil is rare in this summer scene, hence the smaller count. Clusters
 were thinned (e.g. at most ~8 vegetation polygons in Monsanto, fewer built-up
 polygons in central Lisbon), and variety was added on purpose (turbid and clear
-water; forest, parks and irrigated fields; residential, industrial and port areas).
+water; forest, parks and irrigated fields; residential, industrial and port areas;
+light and dark fallow soil, sand).
 
 **Early finding.** Mean polygon spectra show that bare soil and built-up have
-almost identical NDVI (0.09 vs 0.09) and NDBI (0.11 vs 0.13). Bare soil is
-mainly brighter in every band. Several bare-soil polygons fall within the
-spectral range of the built-up class, so confusion between the two is expected.
+almost identical NDVI (~0.09) and NDBI (~0.11–0.13). Bare soil is mainly
+brighter in every band. Several bare-soil polygons fall within the spectral
+range of the built-up class, so confusion between the two is expected.
 
 ### 5. Pixel extraction and features *(planned)*
 
@@ -273,13 +287,15 @@ Monsanto, and areas where built-up and bare soil meet.
 - **Built-up vs bare soil.** These are spectrally similar in this scene (see above).
 - **Unlabelled surface types.** Tidal mudflats and salt marsh belong to none of
   the four classes, but the model must still assign them one.
-- **Spectrally screened labels.** Polygons whose spectra did not match their
-  class were removed. This removes mislabels, but it also removes *atypical*
-  examples, which makes the classes look more separable than they really are.
-  Accuracy measured on these labels is therefore optimistic.
-- **No independent reference.** Labels were checked only against the same
-  Sentinel-2 image the model uses, not against higher-resolution imagery or
-  field data.
+- **Ambiguous cases excluded.** Mislabels were corrected, and ambiguous
+  areas (dry grass, mixed surfaces) were deliberately not labelled. The model
+  therefore never sees borderline cases during evaluation either, so accuracy
+  measured on these labels is somewhat optimistic.
+- **Limited independent reference.** Only the bare-soil class was checked
+  against the 2023 orthophoto. The other classes were checked against the
+  Sentinel-2 image itself. There was no field validation.
+- **Few bare-soil polygons.** 10 polygons, four of them in the same farmland in the
+  south-east. Scores for this class will have high uncertainty.
 - **Limited labels.** Labels are hand-drawn by one person on a single image,
   with no field validation.
 - **Ambiguous land cover.** Dry fields in July sit between "vegetation" and
