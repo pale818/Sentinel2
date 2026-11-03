@@ -33,7 +33,7 @@ limitations are reported.
 | 2 | Data checks (value range, no-data, spectra at known locations) | done |
 | 3 | Label polygons in QGIS (spread over the whole image) | done (97 polygons) |
 | 4 | Review polygons visually, spectrally and against a reference orthophoto | done |
-| 5 | Extract labelled pixels, mask no-data, compute indices, check counts, plot class spectra | planned |
+| 5 | Extract labelled pixels, mask no-data, compute indices, check counts, plot class spectra | done |
 | 6 | Train Random Forest, evaluate with **spatial block cross-validation** | planned |
 | 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | planned |
 | 8 | Predict the full map and inspect it visually (shores, mudflats, built-up vs bare soil) | planned |
@@ -77,10 +77,12 @@ The imagery is not in this repository (see `.gitignore`). To reproduce it:
 SentinelProject/
 ├── data/
 │   ├── raw/            # band TIFFs from the export (not committed)
-│   ├── processed/      # stack.tif (not committed, recreated by stack_bands.py)
+│   ├── processed/      # stack.tif, pixels.csv, polygon_summary.csv (not committed, recreated by the scripts)
 │   └── labels.gpkg     # hand-drawn training polygons (committed)
+├── figures/            # plots used in this README
 ├── stack_bands.py      # stacks the 6 bands into one GeoTIFF
 ├── check_stack.py      # sanity checks on the stack
+├── extract_pixels.py   # labelled pixels, features, class spectra, outlier report
 ├── requirements.txt
 └── README.md
 ```
@@ -94,6 +96,7 @@ pip install -r requirements.txt
 
 python stack_bands.py   # -> data/processed/stack.tif
 python check_stack.py   # prints the data checks below
+python extract_pixels.py   # -> data/processed/pixels.csv + figures/
 ```
 
 ## Pipeline
@@ -235,16 +238,70 @@ almost identical NDVI (~0.09) and NDBI (~0.11–0.13). Bare soil is mainly
 brighter in every band. Several bare-soil polygons fall within the spectral
 range of the built-up class, so confusion between the two is expected.
 
-### 5. Pixel extraction and features *(planned)*
+### 5. Pixel extraction and features (`extract_pixels.py`) — done
 
-- Rasterize the polygons onto the image grid (class and polygon ID per pixel).
-- Mask the no-data border (pixels that are 0 in all bands).
-- Features: the 6 bands plus NDVI (B08, B04), NDWI (B03, B08) and NDBI (B11, B08).
-  The indices are model inputs, not labels.
-- Count pixels per class and per polygon. Large polygons are capped to a
-  maximum number of pixels, so that no single area dominates training.
-- Plot the mean spectrum of each class, to see before training how separable
-  the classes are, especially built-up vs bare soil.
+- The polygons are rasterized onto the image grid. A pixel belongs to a polygon
+  if its centre lies inside it. No-data pixels are masked.
+- Each polygon is assigned to a **2 × 2 km block** based on its centroid, so a
+  polygon is never split across blocks (used for the spatial split in step 6).
+- All labelled pixels are kept in `data/processed/pixels.csv`. Sub-sampling
+  (e.g. fewer pixels per water polygon) is a training choice made in step 6.
+
+| Class | Polygons | Blocks | Pixels | Median pixels / polygon |
+|---|---|---|---|---|
+| Water | 34 | 27 | 7,045 | 207 |
+| Vegetation | 22 | 11 | 2,264 | 73 |
+| Built-up | 31 | 16 | 715 | 23 |
+| Bare soil | 10 | 9 | 996 | 104 |
+| **Total** | **97** | **52** | **11,020** | |
+
+#### Features
+
+Each pixel has 9 features: the 6 bands and three spectral indices. All three
+indices are **normalized differences** of two bands, (A − B) / (A + B), which
+gives a value between −1 and +1:
+
+| Index | Formula | Idea | Mean in this data |
+|---|---|---|---|
+| **NDVI** (vegetation) | (B08 − B04) / (B08 + B04) | Leaves absorb red light and strongly reflect near-infrared | vegetation 0.78, built-up / bare soil ~0.1, water −0.36 |
+| **NDWI** (water) | (B03 − B08) / (B03 + B08) | Water reflects some green but absorbs almost all near-infrared | water 0.54, built-up / bare soil ~−0.2, vegetation −0.71 |
+| **NDBI** ("built-up") | (B11 − B08) / (B11 + B08) | Dry surfaces reflect more shortwave infrared than near-infrared | built-up 0.13, **bare soil 0.14**, vegetation / water ~−0.35 |
+
+Why add indices when the model already has the bands?
+- A ratio largely cancels out overall brightness (illumination, slope), so it
+  describes the *type* of surface rather than how brightly it is lit.
+- A Random Forest splits on one feature at a time, so it cannot easily learn a
+  ratio between two bands by itself. The index provides it as a single feature.
+
+The indices contain no new information, only the same bands in a more usable
+form. They are model inputs, not labels.
+
+Despite its name, **NDBI does not detect buildings specifically**. It detects
+dry, unvegetated surfaces, and bare soil is one of them. In this scene it does
+not separate built-up from bare soil at all.
+
+#### Class spectra
+
+![Mean spectrum per class](figures/class_spectra.png)
+
+![Index distributions per class](figures/index_boxplots.png)
+
+- **Water and vegetation** have completely different spectral shapes and should
+  be easy to classify.
+- **Built-up and bare soil** have the same shape. Bare soil is only shifted
+  upwards, and the spread between polygons overlaps. The largest difference is
+  in shortwave infrared (B11: 0.51 vs 0.39).
+
+#### Outlier report
+
+The script compares each polygon's mean spectrum with the typical spectrum of
+each class. It flags 8 of 97 polygons:
+- 5 built-up polygons (bright industrial and port roofs) whose spectrum is
+  closer to bare soil
+- 3 bare-soil polygons (darker fields) whose spectrum is closer to built-up
+
+These are correctly labelled and were kept. They show the real overlap between
+the two classes, and removing them would only hide it.
 
 ### 6. Training and evaluation *(planned)*
 

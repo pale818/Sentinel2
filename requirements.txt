@@ -1,2 +1,5 @@
 rasterio
 numpy
+pandas
+geopandas
+matplotlib
