@@ -34,8 +34,8 @@ limitations are reported.
 | 3 | Label polygons in QGIS (spread over the whole image) | done (97 polygons) |
 | 4 | Review polygons visually, spectrally and against a reference orthophoto | done |
 | 5 | Extract labelled pixels, mask no-data, compute indices, check counts, plot class spectra | done |
-| 6 | Train Random Forest, evaluate with **spatial block cross-validation** | planned |
-| 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | planned |
+| 6 | Train Random Forest, evaluate with **spatial block cross-validation** | done (baseline) |
+| 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | done (baseline) |
 | 8 | Predict the full map and inspect it visually (shores, mudflats, built-up vs bare soil) | planned |
 | 9 | Final README: results, figures, limitations | planned |
 
@@ -83,6 +83,8 @@ SentinelProject/
 ├── stack_bands.py      # stacks the 6 bands into one GeoTIFF
 ├── check_stack.py      # sanity checks on the stack
 ├── extract_pixels.py   # labelled pixels, features, class spectra, outlier report
+├── train_evaluate.py   # Random Forest, cross-validation (random / polygon / block)
+├── results/            # metrics written by train_evaluate.py
 ├── requirements.txt
 └── README.md
 ```
@@ -97,6 +99,7 @@ pip install -r requirements.txt
 python stack_bands.py   # -> data/processed/stack.tif
 python check_stack.py   # prints the data checks below
 python extract_pixels.py   # -> data/processed/pixels.csv + figures/
+python train_evaluate.py   # -> results/ + figures/ + models/ (~1 min)
 ```
 
 ## Pipeline
@@ -303,27 +306,92 @@ each class. It flags 8 of 97 polygons:
 These are correctly labelled and were kept. They show the real overlap between
 the two classes, and removing them would only hide it.
 
-### 6. Training and evaluation *(planned)*
+### 6. Training and evaluation (`train_evaluate.py`) — done (baseline)
 
-- Random Forest (~200 trees, `class_weight="balanced"`) because water
-  dominates the scene.
-- **Spatial block cross-validation.** The image is divided into blocks of about
-  2 × 2 km, and each polygon is assigned to the block it falls in.
-  `StratifiedGroupKFold` with the block as the group means every fold tests on
-  areas the model has never seen, and every polygon is tested exactly once.
+**Setup**
+- Random Forest, 200 trees, `class_weight="balanced"`.
+- At most 100 pixels per polygon (random sample), so that large polygons do not
+  dominate. Water drops from 7,045 to 3,400 pixels, but all 34 water locations
+  are kept. Training set: 6,576 pixels.
+- Features: 6 bands + NDVI, NDWI, NDBI.
+- 5-fold cross-validation with three ways of splitting, each repeated 3 times:
+  - **random:** pixels are split at random
+  - **polygon:** whole polygons are held out (`StratifiedGroupKFold`, group = polygon)
+  - **block:** whole 2 × 2 km blocks are held out (group = block). **Main result.**
 
-  Why blocks and not single pixels or single polygons: neighbouring pixels are
-  nearly identical (spatial autocorrelation). Two polygons 100 m apart are
-  still near-duplicates. Grouping by block keeps whole neighbourhoods on one
-  side of the split. The split is made by code, not chosen by hand, so it is
-  not biased towards easy test areas.
-- Metrics: confusion matrix and per-class precision, recall and F1, not only
-  overall accuracy.
+Why grouping matters: neighbouring pixels are nearly identical (spatial
+autocorrelation). In a random split, near-copies of every test pixel are in
+the training set, so the test measures memorisation, not generalisation to new
+areas. The split is made by code, not by hand, so it is not biased towards easy
+test areas.
 
-### 7. Random vs spatial split *(planned)*
+**Main result: spatial block cross-validation**
 
-The same model is also evaluated with a random pixel split. The difference
-between the two scores shows how much a naive split overstates accuracy.
+| Class | Precision | Recall | F1 |
+|---|---|---|---|
+| Water | 1.00 | 1.00 | 1.00 |
+| Vegetation | 1.00 | 1.00 | 1.00 |
+| Built-up | 0.80 | 0.96 | 0.87 |
+| Bare soil | 0.95 | 0.78 | 0.86 |
+| **Macro average** | | | **0.93** |
+
+Macro F1 per fold ranges from **0.75 to 0.99**, which is the real uncertainty of
+this estimate (the spread over repeated runs, ±0.003, only reflects how folds
+are shuffled). Overall accuracy is 97%, but it is dominated by water and is not
+a useful headline number.
+
+![Confusion matrix, block CV](figures/confusion_matrix_block.png)
+
+**How to read this**
+- **Water and vegetation (F1 = 1.00)** are spectrally very different from
+  everything else, and the labels contain only clean, homogeneous pixels. This
+  score says that clean pixels of these classes are easy to separate. It does
+  **not** mean that the map is perfect: shorelines, mixed pixels, mudflats and
+  salt pans are not part of the test.
+- **Built-up vs bare soil** is the only real confusion. It is one-sided:
+  22% of bare-soil pixels are predicted as built-up, but only 4% of built-up
+  pixels as bare soil.
+- **The bare-soil errors are concentrated in two polygons**: the darkest field
+  (polygon 127, 0% correct) and the only beach-sand polygon (125, 6% correct).
+  They account for about 147 of the 167 misclassified bare-soil pixels. Each of
+  these sub-types is represented by a single polygon, so when it is held out
+  the model has never seen anything similar. This is a gap in label variety,
+  not a labelling error. The other 8 bare-soil polygons are 75–100% correct.
+- Counted per polygon (majority vote): water 34/34, vegetation 22/22,
+  built-up 30/31, bare soil 8/10.
+
+**Feature importance**
+
+![Permutation importance](figures/feature_importance.png)
+
+Permutation importance on the held-out blocks: **B11 (shortwave infrared)**
+contributes most by far, which matches the class spectra (B11 is where built-up
+and bare soil differ most). NDWI comes second. The other features are strongly
+correlated with each other. When one of them is shuffled, the others still
+carry the same information, so their individual importance is underestimated,
+not zero.
+
+### 7. Random vs spatial split — done (baseline)
+
+![Split comparison](figures/split_comparison.png)
+
+| Split | Macro F1 | Built-up F1 | Bare soil F1 |
+|---|---|---|---|
+| random | 0.99 | 0.98 | 0.98 |
+| polygon | 0.93 | 0.88 | 0.86 |
+| block | 0.93 | 0.87 | 0.86 |
+
+- A random pixel split overstates macro F1 by 0.06. The gap looks small only
+  because water and vegetation score 1.00 in every split. **For the two hard
+  classes, the random split overstates F1 by about 0.11–0.12.**
+- Polygon and block splits give almost the same result. Polygons were spread
+  out on purpose while labelling, so most 2 km blocks contain only one or two
+  polygons. The main leakage is between pixels *inside* a polygon, not between
+  neighbouring polygons.
+
+**Next:** add 2–3 polygons each for the two under-represented bare-soil
+sub-types (beach sand, dark fields) in other locations, and re-run to test
+whether the errors on polygons 125 and 127 are caused by missing variety.
 
 ### 8. Full map and visual inspection *(planned)*
 
@@ -352,7 +420,8 @@ Monsanto, and areas where built-up and bare soil meet.
   against the 2023 orthophoto. The other classes were checked against the
   Sentinel-2 image itself. There was no field validation.
 - **Few bare-soil polygons.** 10 polygons, four of them in the same farmland in the
-  south-east. Scores for this class will have high uncertainty.
+  south-east. Sub-types with a single polygon (beach sand, dark soil) are
+  misclassified when held out, and one fold drops to macro F1 0.75.
 - **Limited labels.** Labels are hand-drawn by one person on a single image,
   with no field validation.
 - **Ambiguous land cover.** Dry fields in July sit between "vegetation" and

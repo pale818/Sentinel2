@@ -1,0 +1,25 @@
+Spatial block cross-validation (first repeat)
+
+              precision    recall  f1-score   support
+
+       Water      1.000     1.000     1.000      3400
+  Vegetation      1.000     1.000     1.000      1696
+    Built-up      0.804     0.955     0.873       715
+   Bare soil      0.949     0.782     0.857       765
+
+    accuracy                          0.970      6576
+   macro avg      0.938     0.934     0.933      6576
+weighted avg      0.973     0.970     0.970      6576
+
+ fold  macro_f1  test_polygons_Water  test_polygons_Vegetation  test_polygons_Built-up  test_polygons_Bare soil
+    0     0.963                    6                         4                       6                        1
+    1     0.992                    7                         5                       6                        2
+    2     0.747                    7                         4                       6                        2
+    3     0.917                    7                         4                       6                        3
+    4     0.966                    7                         5                       7                        2
+
+Confusion matrix (rows = true, columns = predicted): ['Water', 'Vegetation', 'Built-up', 'Bare soil']
+[[3400    0    0    0]
+ [   0 1696    0    0]
+ [   0    0  683   32]
+ [   0    0  167  598]]
