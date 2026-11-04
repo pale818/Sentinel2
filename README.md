@@ -34,8 +34,8 @@ limitations are reported.
 | 3 | Label polygons in QGIS (spread over the whole image) | done (97 polygons) |
 | 4 | Review polygons visually, spectrally and against a reference orthophoto | done |
 | 5 | Extract labelled pixels, mask no-data, compute indices, check counts, plot class spectra | done |
-| 6 | Train Random Forest, evaluate with **spatial block cross-validation** | done (baseline) |
-| 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | done (baseline) |
+| 6 | Train Random Forest, evaluate with **spatial block cross-validation** | done |
+| 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | done |
 | 8 | Predict the full map and inspect it visually (shores, mudflats, built-up vs bare soil) | planned |
 | 9 | Final README: results, figures, limitations | planned |
 
@@ -306,7 +306,7 @@ each class. It flags 8 of 97 polygons:
 These are correctly labelled and were kept. They show the real overlap between
 the two classes, and removing them would only hide it.
 
-### 6. Training and evaluation (`train_evaluate.py`) — done (baseline)
+### 6. Training and evaluation (`train_evaluate.py`) — done
 
 **Setup**
 - Random Forest, 200 trees, `class_weight="balanced"`.
@@ -371,7 +371,7 @@ correlated with each other. When one of them is shuffled, the others still
 carry the same information, so their individual importance is underestimated,
 not zero.
 
-### 7. Random vs spatial split — done (baseline)
+### 7. Random vs spatial split — done
 
 ![Split comparison](figures/split_comparison.png)
 
@@ -389,9 +389,11 @@ not zero.
   polygons. The main leakage is between pixels *inside* a polygon, not between
   neighbouring polygons.
 
-**Next:** add 2–3 polygons each for the two under-represented bare-soil
-sub-types (beach sand, dark fields) in other locations, and re-run to test
-whether the errors on polygons 125 and 127 are caused by missing variety.
+**Possible improvement (not done):** add 2–3 polygons each for the two
+under-represented bare-soil sub-types (beach sand, dark fields) in other
+locations, and re-run to test whether the errors on polygons 125 and 127 are
+caused by missing variety. Few verifiable candidates exist in this summer scene,
+so this was left as future work.
 
 ### 8. Full map and visual inspection *(planned)*
 
