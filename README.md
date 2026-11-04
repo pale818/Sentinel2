@@ -36,7 +36,7 @@ limitations are reported.
 | 5 | Extract labelled pixels, mask no-data, compute indices, check counts, plot class spectra | done |
 | 6 | Train Random Forest, evaluate with **spatial block cross-validation** | done |
 | 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | done |
-| 8 | Predict the full map and inspect it visually (shores, mudflats, built-up vs bare soil) | planned |
+| 8 | Predict the full map and inspect it visually (shores, mudflats, built-up vs bare soil) | done |
 | 9 | Final README: results, figures, limitations | planned |
 
 ## Data
@@ -84,6 +84,7 @@ SentinelProject/
 ├── check_stack.py      # sanity checks on the stack
 ├── extract_pixels.py   # labelled pixels, features, class spectra, outlier report
 ├── train_evaluate.py   # Random Forest, cross-validation (random / polygon / block)
+├── predict_map.py      # classifies every pixel -> land cover map + confidence map
 ├── results/            # metrics written by train_evaluate.py
 ├── requirements.txt
 └── README.md
@@ -100,6 +101,7 @@ python stack_bands.py   # -> data/processed/stack.tif
 python check_stack.py   # prints the data checks below
 python extract_pixels.py   # -> data/processed/pixels.csv + figures/
 python train_evaluate.py   # -> results/ + figures/ + models/ (~1 min)
+python predict_map.py      # -> data/processed/landcover_map.tif + figures/
 ```
 
 ## Pipeline
@@ -395,13 +397,57 @@ locations, and re-run to test whether the errors on polygons 125 and 127 are
 caused by missing variety. Few verifiable candidates exist in this summer scene,
 so this was left as future work.
 
-### 8. Full map and visual inspection *(planned)*
+### 8. Full map and visual inspection (`predict_map.py`) — done
 
-The model predicts every pixel of the image (no-data masked). The map is
-inspected visually, with attention to shorelines, tidal mudflats, the edges of
-Monsanto, and areas where built-up and bare soil meet.
+The final model (trained on all labels) classifies every pixel of the image.
+`landcover_map.tif` has a colour table, so it opens directly in QGIS.
+
+![Land cover map](figures/landcover_map.png)
+
+| Class | Predicted area | Share of image |
+|---|---|---|
+| Water | 125.4 km² | 46.8% |
+| Vegetation | 51.4 km² | 19.1% |
+| Built-up | 85.3 km² | 31.8% |
+| Bare soil | 6.0 km² | 2.3% |
+
+**What works:** water is clean, including harbour basins (even the two bridges
+appear as thin lines). Monsanto, city parks, tree-lined avenues and the
+irrigated fields in the south-east are mapped as vegetation. The structure of
+the city is clearly recognisable.
+
+**What does not: built-up is over-predicted.** Built-up covers about 60% of all
+land in the map, which is too much. The clearest case is the **Montijo
+peninsula** around the airfield, which consists largely of dry grassland but is
+mapped as about one third built-up. The spectra show these are not built-up
+surfaces: on the peninsula, **86% of the pixels predicted as built-up have
+NDVI above 0.15** (median 0.29), compared with only 14% of the labelled
+built-up pixels (median 0.09). They contain a clear vegetation signal.
+<!-- TODO: confirm a few of these areas visually in the orthophoto -->
+
+**Why:** dry grass was deliberately not labelled, because it is ambiguous
+between vegetation and bare soil. The model has never seen it but must still
+assign one of the four classes, so it picks the spectrally closest one. The
+cross-validation could not detect this, because no dry-grass pixels were in the
+test either. **The CV score (built-up F1 0.87) only applies to the kinds of
+surface that were labelled.**
+
+Spot checks on surfaces that were removed during labelling confirm this:
+a dry field north-west of Monsanto and a field cleared after 2023 are both
+mapped as built-up, while an airport area is mapped as bare soil.
+
+![Confidence map](figures/confidence_map.png)
+
+The model is confident on water (0.7% of water pixels below 60% confidence) and
+least confident on the Montijo peninsula, the salt marshes and mudflats in the
+south-east, and along all class boundaries (mixed pixels). These are the
+surface types that were not labelled.
 
 ## Known limitations
+
+- **Unlabelled surface types are forced into the four classes.** Dry
+  grassland is mostly mapped as built-up. This is the largest error in the map
+  and is not visible in the cross-validation scores.
 
 - **Test accuracy measures easy pixels.** Labels are drawn only in clean,
   homogeneous areas. The cross-validation score therefore describes
