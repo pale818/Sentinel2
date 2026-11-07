@@ -423,7 +423,15 @@ mapped as about one third built-up. The spectra show these are not built-up
 surfaces: on the peninsula, **86% of the pixels predicted as built-up have
 NDVI above 0.15** (median 0.29), compared with only 14% of the labelled
 built-up pixels (median 0.09). They contain a clear vegetation signal.
-<!-- TODO: confirm a few of these areas visually in the orthophoto -->
+A visual check against the 2023 orthophoto confirms it: large areas mapped as
+built-up north of Montijo town are **dry and fallow fields**, not buildings.
+
+The same check shows two smaller errors in the other direction:
+- the **airfield runway** is partly mapped as bare soil, although concrete
+  is built-up by definition (bright concrete and bright soil look alike)
+- **salt marsh and mudflats** along the estuary are mapped as vegetation or
+  water. These were deliberately excluded from labelling, so the model has no
+  correct class for them.
 
 **Why:** dry grass was deliberately not labelled, because it is ambiguous
 between vegetation and bare soil. The model has never seen it but must still
