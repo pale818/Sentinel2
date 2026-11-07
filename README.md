@@ -1,8 +1,38 @@
 # Land cover classification of Lisbon with Sentinel-2
 
-> **Status: work in progress.** Data acquisition, stacking and data checks are done.
-> Labelling is done. Sections marked *(planned)* describe intended methods,
-> not results. See "Plan" for the full sequence.
+Pixel-level land cover map of Lisbon and the Tagus estuary (~268 km²) from a
+single Sentinel-2 L2A image (29 July 2026), using hand-labelled polygons and a
+Random Forest. The focus is on **honest evaluation**: a spatial train/test
+split, a check against reference imagery, and an inspection of where the map
+goes wrong.
+
+![Land cover map](figures/landcover_map.png)
+
+## Summary
+
+- **Data:** 6 Sentinel-2 bands (B02, B03, B04, B08, B11, B12) at ~10 m, plus
+  NDVI, NDWI and NDBI. Data checks covered value ranges, no-data and
+  georeferencing.
+- **Labels:** 97 hand-drawn polygons in 4 classes (water, vegetation, built-up,
+  bare soil), checked visually, spectrally and, for bare soil, against a 2023
+  orthophoto. About half of the bare-soil candidates that looked plausible at
+  10 m turned out to be wrong (car parks, airport aprons, scrub, land changed
+  since 2023).
+- **Result (spatial block cross-validation, 2 × 2 km blocks):** macro F1
+  **0.93**. Water and vegetation reach F1 1.00. Built-up (0.87) and bare soil
+  (0.86) are confused with each other. Most bare-soil errors come from two
+  sub-types that have only one polygon each (beach sand, dark soil).
+- **A random pixel split overstates accuracy:** F1 of the two hard classes
+  rises from ~0.87 to ~0.98, because neighbouring near-identical pixels end up
+  in both train and test.
+- **The map shows an error the cross-validation cannot:** dry, fallow fields
+  were not labelled, and the model maps them mostly as built-up. Built-up is
+  therefore clearly over-predicted (~60% of all land). The cross-validation
+  score applies only to the kinds of surface that were labelled.
+- **Most informative feature:** shortwave infrared (B11), the band where
+  built-up and bare soil differ most.
+
+**Tools:** Python (rasterio, geopandas, scikit-learn, matplotlib), QGIS.
 
 ## Goal
 
@@ -37,14 +67,15 @@ limitations are reported.
 | 6 | Train Random Forest, evaluate with **spatial block cross-validation** | done |
 | 7 | Compare with a random pixel split (how much does a naive split overstate accuracy?) | done |
 | 8 | Predict the full map and inspect it visually (shores, mudflats, built-up vs bare soil) | done |
-| 9 | Final README: results, figures, limitations | planned |
+| 9 | Final README: results, figures, limitations | done |
 
 ## Data
 
 | Item | Value |
 |---|---|
 | Satellite / product | Sentinel-2 Level-2A (surface reflectance) |
-| Acquisition date | 29 July 2026 (~5% cloud cover) |
+| Acquisition date | 29 July 2026, 11:21 UTC (~5% cloud cover) |
+| Product | `S2A_MSIL2A_20260729T112131_N0512_R037_T29SMC_20260729T195715` (Sentinel-2A, relative orbit 37, processing baseline 05.12, tile 29SMC) |
 | Source | Copernicus Browser, *Analytical* download |
 | Bands | B02 (blue), B03 (green), B04 (red), B08 (near-infrared), B11, B12 (shortwave infrared) |
 | Format | GeoTIFF, 32-bit float |
@@ -60,7 +91,7 @@ Resampling, cropping and conversion to reflectance were done by the Copernicus
 export service, not by this project. What this project did was verify the result
 (see "Data checks").
 
-<!-- TODO: add the exact Sentinel-2 product name (Copernicus Browser, Search tab, 29 July 2026) -->
+The study area lies within tile **29SMC**. Its eastern edge (Montijo, Alcochete) also falls in the overlap with the neighbouring tile 29SNC. Both tiles come from the same acquisition (same satellite pass and time), so the data are from the same moment, whichever tile the export service used (atmospheric correction is done per tile, so values in the overlap can differ very slightly).
 
 ### Reproducing the download
 
@@ -202,7 +233,8 @@ Every polygon was checked in up to three ways:
 3. **Against a reference orthophoto** (DGT OrtoSat 2023, true and false colour,
    loaded in QGIS as a WMS layer) for the bare-soil class, where 10 m pixels are
    least reliable.
-   <!-- TODO: check the DGT OrtoSat 2023 terms of use before publishing any orthophoto imagery -->
+   The orthophoto was used only for visual checks in QGIS. No orthophoto
+   imagery is published in this repository.
 
 The two image sources answer different questions. The orthophoto (~0.3 m)
 shows **what** a surface is (dirt lot vs. car park, soil vs. dry grass). The
